@@ -96,7 +96,7 @@ svg.grabbing{cursor:grabbing}
 .pickhint{margin:8px 4px 0;color:var(--focus);font-weight:700;min-height:1.5em;font-size:.95rem}
 
 .tabs{display:flex;gap:4px;margin:-4px -4px 12px;flex-wrap:wrap}
-.tab{flex:1 1 auto;white-space:nowrap;font-size:.9rem;border:none;background:transparent;padding:7px 5px;border-radius:9px;color:var(--muted);font-weight:700}
+.tab{flex:1 1 auto;white-space:nowrap;font-size:.84rem;border:none;background:transparent;padding:7px 4px;border-radius:9px;color:var(--muted);font-weight:700}
 .tab[aria-selected="true"]{background:var(--ink);color:var(--panel)}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
 .chip{display:flex;align-items:center;gap:6px;padding:4px 10px 4px 5px;border-radius:999px}
@@ -232,7 +232,7 @@ tr.best td{font-weight:700;color:var(--obj)}
       <div class="actions"><button class="go" data-z="apply">Apply ranges</button><span class="hint" id="rangemsg" style="margin:0;align-self:center"></span></div>
     </details>
     <div class="plot"><svg id="svg" viewBox="0 0 720 560" role="img" aria-label="Graph of the linear programming problem"></svg></div>
-    <p class="hint" style="margin:6px 4px 0">Drag the graph to move it. Scroll or pinch to zoom.</p>
+    <p class="hint" style="margin:6px 4px 0">Drag the graph to move it. To zoom, use ＋ and −, pinch, or hold Ctrl and scroll.</p>
     <p class="pickhint" id="pickhint" aria-live="polite"></p>
   </section>
 
@@ -333,13 +333,15 @@ function computeView(){
     if(c.a!==0){const p=[c.r/c.a,0];if(ok(p))pts.push(p)}
     if(c.b!==0){const p=[0,c.r/c.b];if(ok(p))pts.push(p)}
   }
+  state.cons.forEach((c,i)=>{const L=state.L&&state.L[i];if(!L||!L.eq||!valid(c)||!isLine(c))return;ptsOf(conLine(i),L.pts).forEach(p=>{if(p)pts.push(p)})});
+  if(state.obj&&objOk()){const O=state.obj;[[O.z1,O.p1],[O.z2,O.p2]].forEach(([z,arr])=>{const zz=parseNum(z);if(Number.isFinite(zz))ptsOf(objLine(zz),arr).forEach(p=>{if(p)pts.push(p)})})}
   const good=pts.filter(p=>Math.abs(p[0])<1e7&&Math.abs(p[1])<1e7);
   function axis(vals){
     let lo=Math.min(...vals),hi=Math.max(...vals);
-    if(state.nonneg){lo=0;if(hi<=1e-9)hi=10;hi*=1.18}
-    else{let s=hi-lo;if(s<1e-9)s=10;lo-=s*.15;hi+=s*.15}
+    if(state.nonneg&&lo>=-1e-9){lo=0;if(hi<=1e-9)hi=10;hi*=1.18}
+    else{if(state.nonneg&&lo<0)hi=Math.max(hi,-lo);let s=hi-lo;if(s<1e-9)s=10;lo-=s*.15;hi+=s*.15}
     const st=niceStep(hi-lo,8);
-    return {lo:state.nonneg?-st*0.4:Math.floor(lo/st)*st,hi:Math.ceil(hi/st)*st,step:st};
+    return {lo:state.nonneg&&lo===0?-st*0.4:Math.floor(lo/st)*st,hi:Math.ceil(hi/st)*st,step:st};
   }
   const X=axis(good.map(p=>p[0]).concat([0])),Y=axis(good.map(p=>p[1]).concat([0]));
   return {xmin:X.lo,xmax:X.hi,xs:X.step,ymin:Y.lo,ymax:Y.hi,ys:Y.step};
@@ -402,6 +404,7 @@ function fmt(v){
 }
 function fracFmt(v){for(let d=1;d<=24;d++){const n=Math.round(v*d);if(Math.abs(n/d-v)<1e-9*(1+Math.abs(v)))return (n<0?'−':'')+Math.abs(n)+(d>1?'/'+d:'')}return fmt(v)}
 function rnd(v){return Math.abs(v)<1e-9?0:+v.toPrecision(10)}
+function tickLabel(v){const a=Math.abs(v);if(a>=1e5)return new Intl.NumberFormat('en',{notation:'compact',maximumFractionDigits:2}).format(v);if(a>0&&a<1e-3)return v.toExponential(1);return fmtTick(v)}
 function fmtTick(v){return String(+v.toPrecision(10))}
 function term(coef,name,first){
   if(coef===0)return '';
@@ -439,23 +442,13 @@ function pointFrom(l,val){
 function ptsOf(l,raw){return raw.map(s=>pointFrom(l,parseNum(s)))}
 function canDraw(pts){return pts[0]&&pts[1]&&Math.hypot(pts[0][0]-pts[1][0],pts[0][1]-pts[1][1])>1e-9}
 function suggest(l){
-  const fv=freeVar(l),v=view;
-  const inView=p=>p&&inBox(p,v);
-  const cands=[];
-  if(fv===0){cands.push(0);if(l.a!==0)cands.push(l.r/l.a)}else cands.push(0);
-  let vals=[...new Set(cands.map(rnd))].filter(t=>inView(pointFrom(l,t)));
-  if(vals.length<2){
-    const lo=fv===0?v.xmin:v.ymin,hi=fv===0?v.xmax:v.ymax,st=fv===0?v.xs:v.ys;
-    const ticks=[];for(let t=lo;t<=hi+st*1e-6;t+=st)ticks.push(rnd(t));
-    const ok=ticks.filter(t=>inView(pointFrom(l,t))&&!vals.includes(t));
-    while(vals.length<2&&ok.length){
-      ok.sort((a,b)=>{const d=t=>vals.length?Math.min(...vals.map(u=>Math.abs(u-t))):-Math.abs(t-(lo+hi)/2);return d(b)-d(a)});
-      vals.push(ok.shift());
-    }
-  }
-  if(vals.length<2)vals=fv===0?[0,rnd(v.xmax/2)]:[0,rnd(v.ymax/2)];
-  vals=vals.slice(0,2).sort((a,b)=>a-b);
-  return vals.map(t=>fmtTick(t));
+  // Always give the true intercepts when the line has them; the view refits to show them.
+  const fv=freeVar(l),f=fitView||computeView();
+  let vals;
+  if(l.a!==0&&l.b!==0&&Math.abs(l.r)>1e-12)vals=[0,rnd(l.r/l.a)];        // x = 0 gives the y-intercept, x = r/a gives the x-intercept
+  else if(l.a!==0&&l.b!==0)vals=[0,rnd(f.xs*2)];                           // line through the origin
+  else vals=[0,rnd((fv===0?f.xs:f.ys)*4)];                                  // horizontal or vertical line
+  return vals.sort((a,b)=>a-b).map(t=>fmtTick(t));
 }
 function sideWord(c,side){
   // side: '<=' means a x + b y < r
@@ -503,13 +496,13 @@ function draw(){
   ['obj','obj2'].forEach(k=>g+='<marker id="ah-'+k+'" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--'+k+')"/></marker>');
   g+='<clipPath id="pc"><rect x="'+M.l+'" y="'+M.t+'" width="'+pw+'" height="'+ph+'"/></clipPath></defs>';
   for(let kx=Math.ceil(v.xmin/v.xs-1e-9);kx*v.xs<=v.xmax+v.xs*1e-6;kx++){const x=rnd(kx*v.xs),X=px(x).toFixed(2);
-    g+='<line class="gminor" x1="'+X+'" y1="'+M.t+'" x2="'+X+'" y2="'+(H-M.b)+'"/><text class="tick" x="'+X+'" y="'+(H-M.b+18)+'" text-anchor="middle">'+fmtTick(x)+'</text>'}
+    g+='<line class="gminor" x1="'+X+'" y1="'+M.t+'" x2="'+X+'" y2="'+(H-M.b)+'"/><text class="tick" x="'+X+'" y="'+(H-M.b+18)+'" text-anchor="middle">'+tickLabel(x)+'</text>'}
   for(let ky=Math.ceil(v.ymin/v.ys-1e-9);ky*v.ys<=v.ymax+v.ys*1e-6;ky++){const y=rnd(ky*v.ys),Y=py(y).toFixed(2);
-    g+='<line class="gminor" x1="'+M.l+'" y1="'+Y+'" x2="'+(W-M.r)+'" y2="'+Y+'"/><text class="tick" x="'+(M.l-8)+'" y="'+(+Y+4)+'" text-anchor="end">'+fmtTick(y)+'</text>'}
+    g+='<line class="gminor" x1="'+M.l+'" y1="'+Y+'" x2="'+(W-M.r)+'" y2="'+Y+'"/><text class="tick" x="'+(M.l-8)+'" y="'+(+Y+4)+'" text-anchor="end">'+tickLabel(y)+'</text>'}
   if(v.xmin<=0&&v.xmax>=0)g+='<line class="gaxis" x1="'+px(0)+'" y1="'+M.t+'" x2="'+px(0)+'" y2="'+(H-M.b)+'"/>';
   if(v.ymin<=0&&v.ymax>=0)g+='<line class="gaxis" x1="'+M.l+'" y1="'+py(0)+'" x2="'+(W-M.r)+'" y2="'+py(0)+'"/>';
   g+='<rect x="'+M.l+'" y="'+M.t+'" width="'+pw+'" height="'+ph+'" fill="none" style="stroke:var(--line)"/>';
-  g+='<text class="axlabel" x="'+(W-M.r)+'" y="'+(H-12)+'" text-anchor="end">'+esc(state.names[0])+'</text><text class="axlabel" x="16" y="'+(M.t+12)+'">'+esc(state.names[1])+'</text>';
+  g+='<text class="axlabel" x="'+(W-M.r)+'" y="'+(H-12)+'" text-anchor="end">'+esc(state.names[0])+'</text><text class="axlabel" x="8" y="'+(M.t-6)+'">'+esc(state.names[1])+'</text>';
   g+='<g clip-path="url(#pc)">';
 
   // half-plane shading
@@ -743,6 +736,7 @@ function panBy(fx,fy){const v0=view,dx=(v0.xmax-v0.xmin)*fx,dy=(v0.ymax-v0.ymin)
   svg.addEventListener('pointerup',end);svg.addEventListener('pointercancel',end);
   let wheelT=null;
   svg.addEventListener('wheel',e=>{
+    if(!e.ctrlKey&&!e.metaKey)return;
     e.preventDefault();
     const f=Math.exp(Math.max(-60,Math.min(60,e.deltaY))*0.004),c=dataAt(view,toSvg(e.clientX,e.clientY));
     setView(zoomed(view,f,f,c[0],c[1]));
@@ -1191,7 +1185,7 @@ $('lesson').addEventListener('click',e=>{
     case 'tab':state.tab=b.dataset.t;break;
     case 'sel':state.sel=+b.dataset.i;break;
     case 'eq':L.eq=true;break;
-    case 'suggest':{const k=b.dataset.k;
+    case 'suggest':{const k=b.dataset.k;state.autoFit=true;
       if(k==='con')L.pts=suggest(conLine(i));
       else if(k==='z1')O.p1=suggest(objLine(parseNum(O.z1)));
       else O.p2=suggest(objLine(parseNum(O.z2)));break}
